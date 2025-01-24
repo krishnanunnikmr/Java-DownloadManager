@@ -65,3 +65,49 @@ Dependencies in project (Defined in POM.xml):
  4. JUnit4 : For testing purpose.
 
 The Project has proper documentation and and taking a Java Doc would provide proper insights of project. 
+
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+
+public class KeyingLinkingService {
+
+    public FindEntityDomainResponse getResponseFromExtFindEntity(List<FindEntityRequest> findEntityRequestList, Metadata header, String correlationId) {
+
+        // Use Map.ofEntries to create an immutable map
+        Map<FindEntityRequest, CompletableFuture<FindEntityResponse>> findEntityFutureResponseMap = findEntityRequestList.stream()
+                .collect(Collectors.toUnmodifiableMap(
+                        Function.identity(),
+                        findEntityRequest -> {
+                            try {
+                                InquiryService6rpc.InquiryServiceFutureStub findEntityFutureStub = InquiryServiceGrpc
+                                        .newFutureStub(gRPCKNLFindEntityChannel)
+                                        .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(header));
+
+                                ListenableFuture<FindEntityResponse> findEntityFutureResponse = findEntityFutureStub
+                                        .withDeadlineAfter(Duration.ofMillis(keyAndLinkingConfig.getTimeoutVal()))
+                                        .findEntity(findEntityRequest);
+
+                                // Convert ListenableFuture to CompletableFuture for better interoperability
+                                return Futures.getUnchecked(findEntityFutureResponse);
+                            } catch (Exception e) {
+                                log.debug("Exception while interacting with keying and linking using future Stub for CorrelationId: {}, Exception Trace: {}", correlationId, ExceptionUtils.getStackTrace(e));
+                                // Use CompletableFuture.failedFuture to propagate the exception
+                                return CompletableFuture.failedFuture(e);
+                            }
+                        }
+                ));
+
+        return processKeyingLinkingResponse(findEntityFutureResponseMap, correlationId);
+    }
+}
+
